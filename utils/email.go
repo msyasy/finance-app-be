@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"log"
 	"net/smtp"
 	"os"
 )
@@ -13,12 +14,28 @@ func SendResetPasswordEmail(toEmail, token string) error {
 	smtpPassword := os.Getenv("SMTP_PASSWORD")
 	frontendURL := os.Getenv("FRONTEND_URL")
 
+	// 1. Validasi variabel environment
+	if smtpHost == "" || smtpPort == "" || smtpEmail == "" || smtpPassword == "" {
+		err := fmt.Errorf("variabel SMTP belum lengkap di environment")
+		log.Println("[SMTP ERROR]:", err)
+		return err
+	}
+
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", frontendURL, token)
 
-	auth := smtp.PlainAuth("", smtpEmail, smtpPassword, smtpHost)
+	// 2. Format Header & Content Email (Lengkap dengan From dan To)
+	headers := make(map[string]string)
+	headers["From"] = fmt.Sprintf("Aplikasi Keuangan <%s>", smtpEmail)
+	headers["To"] = toEmail
+	headers["Subject"] = "Reset Password - Aplikasi Keuangan"
+	headers["MIME-Version"] = "1.0"
+	headers["Content-Type"] = "text/html; charset=\"UTF-8\""
 
-	subject := "Subject: Reset Password - Aplikasi Keuangan\n"
-	mime := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
+	message := ""
+	for k, v := range headers {
+		message += fmt.Sprintf("%s: %s\r\n", k, v)
+	}
+
 	body := fmt.Sprintf(`
 		<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
 			<h2>Permintaan Reset Password</h2>
@@ -34,8 +51,20 @@ func SendResetPasswordEmail(toEmail, token string) error {
 		</div>
 	`, resetLink, resetLink, resetLink)
 
-	msg := []byte(subject + mime + body)
+	message += "\r\n" + body
+
+	// 3. Autentikasi dan Pengiriman Email
+	auth := smtp.PlainAuth("", smtpEmail, smtpPassword, smtpHost)
 	addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
 
-	return smtp.SendMail(addr, auth, smtpEmail, []string{toEmail}, msg)
+	log.Printf("[SMTP INFO] Mengirim email reset password ke %s via %s...", toEmail, addr)
+
+	err := smtp.SendMail(addr, auth, smtpEmail, []string{toEmail}, []byte(message))
+	if err != nil {
+		log.Println("[SMTP ERROR Gagal Kirim Email]:", err)
+		return err
+	}
+
+	log.Println("[SMTP SUCCESS] Email reset password berhasil terkirim!")
+	return nil
 }
