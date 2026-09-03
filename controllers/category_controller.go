@@ -1,0 +1,99 @@
+package controllers
+
+import (
+	"finance-app-be/config"
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
+
+type CategoryInput struct {
+	Name string `json:"name" binding:"required"`
+	Type string `json:"type" binding:"required"` // "income" atau "expense"
+}
+
+func getUserIDFromCategoryCtx(c *gin.Context) int {
+	val, exists := c.Get("userID")
+	if !exists {
+		return 0
+	}
+	switch v := val.(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func CreateCategory(c *gin.Context) {
+	var input CategoryInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := getUserIDFromCategoryCtx(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID tidak valid"})
+		return
+	}
+
+	cleanName := strings.TrimSpace(input.Name)
+
+	// Cek duplikat kategori per user
+	var count int
+	err := config.DB.QueryRow("SELECT COUNT(*) FROM categories WHERE (user_id = $1 OR user_id IS NULL) AND LOWER(name) = LOWER($2) AND type = $3", userID, cleanName, input.Type).Scan(&count)
+	if err == nil && count > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Kategori tersebut sudah ada"})
+		return
+	}
+
+	var categoryID int
+	query := "INSERT INTO categories (user_id, name, type) VALUES ($1, $2, $3) RETURNING id"
+	err = config.DB.QueryRow(query, userID, cleanName, input.Type).Scan(&categoryID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat kategori baru"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Kategori berhasil dibuat", "category_id": categoryID})
+}
+
+func GetCategories(c *gin.Context) {
+	userID := getUserIDFromCategoryCtx(c)
+
+	// Inisialisasi Kategori Default otomatis jika tabel masih kosong
+	var totalCount int
+	_ = config.DB.QueryRow("SELECT COUNT(*) FROM categories").Scan(&totalCount)
+	if totalCount == 0 {
+		_, _ = config.DB.Exec("INSERT INTO categories (name, type) VALUES ('Gaji / Pendapatan', 'income'), ('Makanan & Minuman', 'expense'), ('Transportasi', 'expense'), ('Hiburan', 'expense')")
+	}
+
+	// Ambil kategori default (tanpa user_id) dan kategori kustom milik user
+	// Menggunakan COALESCE untuk fallback jika tipe kategori NULL
+	rows, err := config.DB.Query("SELECT id, name, COALESCE(type, 'expense') as type FROM categories WHERE user_id = $1 OR user_id IS NULL ORDER BY id ASC", userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data kategori"})
+		return
+	}
+	defer rows.Close()
+
+	type CategoryRes struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+
+	categories := make([]CategoryRes, 0)
+	for rows.Next() {
+		var cat CategoryRes
+		if err := rows.Scan(&cat.ID, &cat.Name, &cat.Type); err == nil {
+			categories = append(categories, cat)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": categories})
+}
