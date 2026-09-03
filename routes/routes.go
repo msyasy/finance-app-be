@@ -39,11 +39,13 @@ func SetupRouter() *gin.Engine {
 
 	api := r.Group("/api")
 	{
-		// Public Routes
+		// Public Routes (Bisa diakses tanpa token/login)
 		api.POST("/register", controllers.Register)
 		api.POST("/login", controllers.Login)
+		api.POST("/forgot-password", controllers.ForgotPassword)
+		api.POST("/reset-password", controllers.ResetPassword)
 
-		// Protected Routes
+		// Protected Routes (Wajib membawa Token JWT)
 		protected := api.Group("/")
 		protected.Use(middlewares.AuthMiddleware())
 		{

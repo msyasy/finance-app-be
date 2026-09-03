@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"finance-app-be/config"
-	"finance-app-be/models"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"os"
 	"time"
@@ -10,6 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+
+	"finance-app-be/config"
+	"finance-app-be/models"
+	"finance-app-be/utils"
 )
 
 type RegisterInput struct {
@@ -90,4 +94,94 @@ func Login(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"token": tokenString})
+}
+
+// --- LOGIKA LUPA & RESET PASSWORD ---
+
+func generateRandomToken() string {
+	bytes := make([]byte, 16)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
+}
+
+// POST /api/forgot-password
+func ForgotPassword(c *gin.Context) {
+	var input struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format email tidak valid"})
+		return
+	}
+
+	var userId int
+	// Cek apakah email terdaftar
+	err := config.DB.QueryRow("SELECT id FROM users WHERE email = $1", input.Email).Scan(&userId)
+	if err != nil {
+		// Pesan sukses dikembalikan agar email terdaftar tidak mudah ditebak pihak luar
+		c.JSON(http.StatusOK, gin.H{"message": "Jika email terdaftar, instruksi reset password telah dikirim ke email kamu."})
+		return
+	}
+
+	token := generateRandomToken()
+	expiresAt := time.Now().Add(15 * time.Minute)
+
+	// Hapus token lama jika ada, lalu simpan token baru ke database
+	_, _ = config.DB.Exec("DELETE FROM password_resets WHERE email = $1", input.Email)
+	_, err = config.DB.Exec("INSERT INTO password_resets (email, token, expires_at) VALUES ($1, $2, $3)", input.Email, token, expiresAt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses permintaan reset password"})
+		return
+	}
+
+	// Kirim email lewat Goroutine (background process)
+	go utils.SendResetPasswordEmail(input.Email, token)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Jika email terdaftar, instruksi reset password telah dikirim ke email kamu."})
+}
+
+// POST /api/reset-password
+func ResetPassword(c *gin.Context) {
+	var input struct {
+		Token       string `json:"token" binding:"required"`
+		NewPassword string `json:"new_password" binding:"required,min=6"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token dan password baru (minimal 6 karakter) wajib diisi"})
+		return
+	}
+
+	var email string
+	var expiresAt time.Time
+	err := config.DB.QueryRow("SELECT email, expires_at FROM password_resets WHERE token = $1", input.Token).Scan(&email, &expiresAt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token reset tidak valid atau sudah pernah digunakan"})
+		return
+	}
+
+	if time.Now().After(expiresAt) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token reset sudah kadaluarsa. Silakan minta link reset baru."})
+		return
+	}
+
+	// Hash password baru
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memproses password baru"})
+		return
+	}
+
+	// Update kolom password_hash di tabel users
+	_, err = config.DB.Exec("UPDATE users SET password_hash = $1 WHERE email = $2", string(hashedPassword), email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mereset password"})
+		return
+	}
+
+	// Hapus token yang sudah dipakai
+	_, _ = config.DB.Exec("DELETE FROM password_resets WHERE token = $1", input.Token)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password berhasil diperbarui! Silakan login dengan password baru."})
 }
