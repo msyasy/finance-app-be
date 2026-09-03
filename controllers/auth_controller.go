@@ -3,6 +3,7 @@ package controllers
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -135,8 +136,11 @@ func ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// Kirim email lewat Goroutine (background process)
-	go utils.SendResetPasswordEmail(input.Email, token)
+	// Kirim email secara synchronous (tanpa goroutine) agar koneksi SMTP dipastikan selesai
+	err = utils.SendResetPasswordEmail(input.Email, token)
+	if err != nil {
+		log.Println("[FORGOT PASSWORD ERROR]: Gagal mengirim email ->", err)
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Jika email terdaftar, instruksi reset password telah dikirim ke email kamu."})
 }
