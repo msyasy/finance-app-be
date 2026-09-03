@@ -1,41 +1,34 @@
 package utils
 
 import (
-	"crypto/tls"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
-	"net/smtp"
+	"net/http"
 	"os"
 )
 
+type ResendPayload struct {
+	From    string   `json:"from"`
+	To      []string `json:"to"`
+	Subject string   `json:"subject"`
+	Html    string   `json:"html"`
+}
+
 func SendResetPasswordEmail(toEmail, token string) error {
-	smtpHost := os.Getenv("SMTP_HOST")
-	smtpPort := os.Getenv("SMTP_PORT")
-	smtpEmail := os.Getenv("SMTP_EMAIL")
-	smtpPassword := os.Getenv("SMTP_PASSWORD")
+	apiKey := os.Getenv("RESEND_API_KEY")
 	frontendURL := os.Getenv("FRONTEND_URL")
 
-	if smtpHost == "" || smtpPort == "" || smtpEmail == "" || smtpPassword == "" {
-		err := fmt.Errorf("variabel SMTP belum lengkap di environment")
-		log.Println("[SMTP ERROR]:", err)
+	if apiKey == "" {
+		err := fmt.Errorf("RESEND_API_KEY belum dikonfigurasi di environment")
+		log.Println("[RESEND ERROR]:", err)
 		return err
 	}
 
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", frontendURL, token)
 
-	headers := make(map[string]string)
-	headers["From"] = fmt.Sprintf("Aplikasi Keuangan <%s>", smtpEmail)
-	headers["To"] = toEmail
-	headers["Subject"] = "Reset Password - Aplikasi Keuangan"
-	headers["MIME-Version"] = "1.0"
-	headers["Content-Type"] = "text/html; charset=\"UTF-8\""
-
-	message := ""
-	for k, v := range headers {
-		message += fmt.Sprintf("%s: %s\r\n", k, v)
-	}
-
-	body := fmt.Sprintf(`
+	htmlBody := fmt.Sprintf(`
 		<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
 			<h2>Permintaan Reset Password</h2>
 			<p>Kamu menerima email ini karena ada permintaan untuk mereset password akun aplikasi keuangan kamu.</p>
@@ -50,66 +43,44 @@ func SendResetPasswordEmail(toEmail, token string) error {
 		</div>
 	`, resetLink, resetLink, resetLink)
 
-	message += "\r\n" + body
-
-	addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
-	log.Printf("[SMTP INFO] Mengirim email via SSL ke %s (%s)...", toEmail, addr)
-
-	auth := smtp.PlainAuth("", smtpEmail, smtpPassword, smtpHost)
-
-	// Dial menggunakan TLS/SSL langsung untuk port 465
-	tlsconfig := &tls.Config{
-		InsecureSkipVerify: false,
-		ServerName:         smtpHost,
+	// Pengirim default untuk akun gratis Resend
+	payload := ResendPayload{
+		From:    "Aplikasi Keuangan <onboarding@resend.dev>",
+		To:      []string{toEmail},
+		Subject: "Reset Password - Aplikasi Keuangan",
+		Html:    htmlBody,
 	}
 
-	conn, err := tls.Dial("tcp", addr, tlsconfig)
+	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
-		log.Println("[SMTP ERROR TLS Dial Failed]:", err)
+		log.Println("[RESEND ERROR Marshal]:", err)
 		return err
 	}
-	defer conn.Close()
 
-	client, err := smtp.NewClient(conn, smtpHost)
+	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewBuffer(jsonPayload))
 	if err != nil {
-		log.Println("[SMTP ERROR NewClient Failed]:", err)
-		return err
-	}
-	defer client.Quit()
-
-	if err = client.Auth(auth); err != nil {
-		log.Println("[SMTP ERROR Auth Failed]:", err)
+		log.Println("[RESEND ERROR Request]:", err)
 		return err
 	}
 
-	if err = client.Mail(smtpEmail); err != nil {
-		log.Println("[SMTP ERROR Mail From Failed]:", err)
-		return err
-	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
 
-	if err = client.Rcpt(toEmail); err != nil {
-		log.Println("[SMTP ERROR Rcpt To Failed]:", err)
-		return err
-	}
-
-	w, err := client.Data()
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		log.Println("[SMTP ERROR Data Failed]:", err)
+		log.Println("[RESEND ERROR Send]:", err)
 		return err
 	}
+	defer resp.Body.Close()
 
-	_, err = w.Write([]byte(message))
-	if err != nil {
-		log.Println("[SMTP ERROR Write Failed]:", err)
-		return err
+	if resp.StatusCode >= 400 {
+		var errResp map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		log.Println("[RESEND ERROR API Response]:", errResp)
+		return fmt.Errorf("gagal mengirim email via Resend API: %v", errResp)
 	}
 
-	err = w.Close()
-	if err != nil {
-		log.Println("[SMTP ERROR Close Failed]:", err)
-		return err
-	}
-
-	log.Println("[SMTP SUCCESS] Email reset password berhasil terkirim!")
+	log.Println("[RESEND SUCCESS] Email reset password berhasil terkirim ke", toEmail)
 	return nil
 }
