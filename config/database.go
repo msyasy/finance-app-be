@@ -12,10 +12,10 @@ import (
 var DB *sql.DB
 
 func ConnectDB() {
-	// Ambil dari Environment Variable Render (DATABASE_URL)
+	// Ambil URI database dari Environment Variable
 	connStr := os.Getenv("DATABASE_URL")
 
-	// Jika DATABASE_URL kosong (saat dijalankan di lokal tanpa .env)
+	// Jika di lokal dan DATABASE_URL tidak ada, gunakan localhost
 	if connStr == "" {
 		connStr = "host=localhost port=5432 user=postgres password=317505 dbname=finance_db sslmode=disable"
 	}
