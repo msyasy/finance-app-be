@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"net/http"
 	"os"
 	"time"
 
@@ -14,7 +15,7 @@ func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		allowedOrigin := os.Getenv("FRONTEND_URL")
 		if allowedOrigin == "" {
-			allowedOrigin = "http://localhost:5173" 
+			allowedOrigin = "http://localhost:5173"
 		}
 
 		origin := c.Request.Header.Get("Origin")
@@ -46,13 +47,23 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 	}
 }
 
+// MaxBodySizeMiddleware membatasi ukuran request body (mencegah DoS payload raksasa)
+func MaxBodySizeMiddleware(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
+}
+
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
 	r.SetTrustedProxies(nil)
 
+	// Middlewares Keamanan Utama
 	r.Use(CORSMiddleware())
 	r.Use(SecurityHeadersMiddleware())
+	r.Use(MaxBodySizeMiddleware(2 << 20)) 
 
 	authRateLimiter := middlewares.RateLimiter(5, 1*time.Minute)
 
