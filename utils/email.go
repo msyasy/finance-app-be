@@ -1,24 +1,18 @@
 package utils
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
+	"net/smtp"
 	"os"
 	"strings"
 )
 
-type ResendPayload struct {
-	From    string   `json:"from"`
-	To      []string `json:"to"`
-	Subject string   `json:"subject"`
-	Html    string   `json:"html"`
-}
-
 func SendResetPasswordEmail(toEmail, token string) error {
-	apiKey := os.Getenv("RESEND_API_KEY")
+	smtpHost := os.Getenv("SMTP_HOST")     // smtp.gmail.com
+	smtpPort := os.Getenv("SMTP_PORT")     // 587
+	smtpEmail := os.Getenv("SMTP_EMAIL")   // msyasy.care@gmail.com
+	smtpPass := os.Getenv("SMTP_PASSWORD") // App Password
 	frontendURL := os.Getenv("FRONTEND_URL")
 
 	// Membersihkan format markdown jika tak sengaja tersimpan di env variable Railway
@@ -29,14 +23,25 @@ func SendResetPasswordEmail(toEmail, token string) error {
 		frontendURL = strings.TrimPrefix(frontendURL, "[")
 	}
 
-	if apiKey == "" {
-		err := fmt.Errorf("RESEND_API_KEY belum dikonfigurasi di environment")
-		log.Println("[RESEND ERROR]:", err)
+	if frontendURL == "" {
+		frontendURL = "https://lapkeu.zone.id"
+	}
+
+	if smtpHost == "" || smtpEmail == "" || smtpPass == "" {
+		err := fmt.Errorf("konfigurasi SMTP belum lengkap di environment variable")
+		log.Println("[SMTP ERROR]:", err)
 		return err
+	}
+
+	if smtpPort == "" {
+		smtpPort = "587"
 	}
 
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", frontendURL, token)
 
+	// Format Header & Body Email HTML
+	subject := "Subject: Reset Password - Lapkeu\n"
+	mime := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
 	htmlBody := fmt.Sprintf(`
 		<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
 			<h2>Permintaan Reset Password</h2>
@@ -52,43 +57,18 @@ func SendResetPasswordEmail(toEmail, token string) error {
 		</div>
 	`, resetLink, resetLink, resetLink)
 
-	payload := ResendPayload{
-		From:    "Aplikasi Keuangan <onboarding@resend.dev>",
-		To:      []string{toEmail},
-		Subject: "Reset Password - Aplikasi Keuangan",
-		Html:    htmlBody,
-	}
+	msg := []byte(subject + mime + htmlBody)
 
-	jsonPayload, err := json.Marshal(payload)
+	// Autentikasi dan Pengiriman via Gmail SMTP
+	auth := smtp.PlainAuth("", smtpEmail, smtpPass, smtpHost)
+	addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
+
+	err := smtp.SendMail(addr, auth, smtpEmail, []string{toEmail}, msg)
 	if err != nil {
-		log.Println("[RESEND ERROR Marshal]:", err)
-		return err
+		log.Println("[SMTP ERROR Send]:", err)
+		return fmt.Errorf("gagal mengirim email via SMTP: %v", err)
 	}
 
-	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewBuffer(jsonPayload))
-	if err != nil {
-		log.Println("[RESEND ERROR Request]:", err)
-		return err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Println("[RESEND ERROR Send]:", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		var errResp map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		log.Println("[RESEND ERROR API Response]:", errResp)
-		return fmt.Errorf("gagal mengirim email via Resend API: %v", errResp)
-	}
-
-	log.Println("[RESEND SUCCESS] Email reset password berhasil terkirim ke", toEmail)
+	log.Println("[SMTP SUCCESS] Email reset password berhasil terkirim ke", toEmail)
 	return nil
 }
