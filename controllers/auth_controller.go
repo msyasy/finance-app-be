@@ -52,7 +52,10 @@ func Register(c *gin.Context) {
 
 	// Buat Dompet Utama Otomatis saat registrasi
 	queryWallet := "INSERT INTO wallets (user_id, name, balance) VALUES ($1, $2, $3)"
-	_, _ = config.DB.Exec(queryWallet, userID, "Dompet Utama", 0)
+	_, err = config.DB.Exec(queryWallet, userID, "Dompet Utama", 0)
+	if err != nil {
+		log.Println("[REGISTER WARNING]: Gagal membuat dompet utama ->", err)
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Registrasi berhasil"})
 }
@@ -83,12 +86,13 @@ func Login(c *gin.Context) {
 		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	})
 
-	jwtSecret := []byte(os.Getenv("JWT_SECRET"))
-	if len(jwtSecret) == 0 {
-		jwtSecret = []byte("secretkeyrahasia")
+	jwtSecretStr := os.Getenv("JWT_SECRET")
+	if jwtSecretStr == "" {
+		log.Println("[SECURITY WARNING]: JWT_SECRET tidak di-set di environment variables!")
+		jwtSecretStr = "secretkeyrahasia"
 	}
 
-	tokenString, err := token.SignedString(jwtSecret)
+	tokenString, err := token.SignedString([]byte(jwtSecretStr))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat token"})
 		return
@@ -120,7 +124,7 @@ func ForgotPassword(c *gin.Context) {
 	// Cek apakah email terdaftar
 	err := config.DB.QueryRow("SELECT id FROM users WHERE email = $1", input.Email).Scan(&userId)
 	if err != nil {
-		// Pesan sukses dikembalikan agar email terdaftar tidak mudah ditebak pihak luar
+		// Pesan sukses dikembalikan agar email terdaftar tidak mudah ditebak pihak luar (User Enumeration Protection)
 		c.JSON(http.StatusOK, gin.H{"message": "Jika email terdaftar, instruksi reset password telah dikirim ke email kamu."})
 		return
 	}
@@ -136,7 +140,7 @@ func ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// Kirim email secara synchronous (tanpa goroutine) agar koneksi SMTP dipastikan selesai
+	// Kirim email reset password
 	err = utils.SendResetPasswordEmail(input.Email, token)
 	if err != nil {
 		log.Println("[FORGOT PASSWORD ERROR]: Gagal mengirim email ->", err)
@@ -166,6 +170,8 @@ func ResetPassword(c *gin.Context) {
 	}
 
 	if time.Now().After(expiresAt) {
+		// Hapus token kadaluarsa
+		_, _ = config.DB.Exec("DELETE FROM password_resets WHERE token = $1", input.Token)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Token reset sudah kadaluarsa. Silakan minta link reset baru."})
 		return
 	}
@@ -184,7 +190,7 @@ func ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// Hapus token yang sudah dipakai
+	// Hapus token yang sudah berhasil dipakai (Replay Attack Protection)
 	_, _ = config.DB.Exec("DELETE FROM password_resets WHERE token = $1", input.Token)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password berhasil diperbarui! Silakan login dengan password baru."})
