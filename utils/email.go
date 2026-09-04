@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 )
 
 type ResendPayload struct {
@@ -19,6 +20,14 @@ type ResendPayload struct {
 func SendResetPasswordEmail(toEmail, token string) error {
 	apiKey := os.Getenv("RESEND_API_KEY")
 	frontendURL := os.Getenv("FRONTEND_URL")
+
+	// Membersihkan format markdown jika tak sengaja tersimpan di env variable Railway
+	frontendURL = strings.TrimSpace(frontendURL)
+	frontendURL = strings.Trim(frontendURL, "[]")
+	if idx := strings.Index(frontendURL, "]("); idx != -1 {
+		frontendURL = frontendURL[:idx]
+		frontendURL = strings.TrimPrefix(frontendURL, "[")
+	}
 
 	if apiKey == "" {
 		err := fmt.Errorf("RESEND_API_KEY belum dikonfigurasi di environment")
@@ -43,7 +52,6 @@ func SendResetPasswordEmail(toEmail, token string) error {
 		</div>
 	`, resetLink, resetLink, resetLink)
 
-	// Pengirim default untuk akun gratis Resend
 	payload := ResendPayload{
 		From:    "Aplikasi Keuangan <onboarding@resend.dev>",
 		To:      []string{toEmail},
