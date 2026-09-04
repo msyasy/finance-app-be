@@ -1,13 +1,14 @@
 package routes
 
 import (
+	"time"
+
 	"finance-app-be/controllers"
 	"finance-app-be/middlewares"
 
 	"github.com/gin-gonic/gin"
 )
 
-// CORSMiddleware menangani preflight request (OPTIONS) dan memberikan izin CORS
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
@@ -21,7 +22,7 @@ func CORSMiddleware() gin.HandlerFunc {
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
 
-		// Tangani Preflight Request (OPTIONS)
+		
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
@@ -34,18 +35,19 @@ func CORSMiddleware() gin.HandlerFunc {
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
-	// Pasang Middleware CORS paling atas
+	r.SetTrustedProxies(nil)
+
 	r.Use(CORSMiddleware())
+
+	authRateLimiter := middlewares.RateLimiter(5, 1*time.Minute)
 
 	api := r.Group("/api")
 	{
-		// Public Routes (Bisa diakses tanpa token/login)
 		api.POST("/register", controllers.Register)
-		api.POST("/login", controllers.Login)
-		api.POST("/forgot-password", controllers.ForgotPassword)
+		api.POST("/login", authRateLimiter, controllers.Login)
+		api.POST("/forgot-password", authRateLimiter, controllers.ForgotPassword)
 		api.POST("/reset-password", controllers.ResetPassword)
 
-		// Protected Routes (Wajib membawa Token JWT)
 		protected := api.Group("/")
 		protected.Use(middlewares.AuthMiddleware())
 		{
