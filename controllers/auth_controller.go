@@ -140,11 +140,13 @@ func ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// Kirim email reset password
-	err = utils.SendResetPasswordEmail(input.Email, token)
-	if err != nil {
-		log.Println("[FORGOT PASSWORD ERROR]: Gagal mengirim email ->", err)
-	}
+	// Kirim email reset password di background via Goroutine (Asinkronus / Non-blocking)
+	go func(targetEmail, resetToken string) {
+		err := utils.SendResetPasswordEmail(targetEmail, resetToken)
+		if err != nil {
+			log.Println("[FORGOT PASSWORD ERROR]: Gagal mengirim email ->", err)
+		}
+	}(input.Email, token)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Jika email terdaftar, instruksi reset password telah dikirim ke email kamu."})
 }

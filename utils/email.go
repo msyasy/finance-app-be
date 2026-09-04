@@ -1,21 +1,35 @@
 package utils
 
 import (
-	"crypto/tls"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
-	"net"
-	"net/smtp"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 )
 
+type BrevoSender struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+type BrevoRecipient struct {
+	Email string `json:"email"`
+}
+
+type BrevoPayload struct {
+	Sender      BrevoSender      `json:"sender"`
+	To          []BrevoRecipient `json:"to"`
+	Subject     string           `json:"subject"`
+	HtmlContent string           `json:"htmlContent"`
+}
+
 func SendResetPasswordEmail(toEmail, token string) error {
-	smtpHost := os.Getenv("SMTP_HOST")  
-	smtpPort := os.Getenv("SMTP_PORT")
-	smtpEmail := os.Getenv("SMTP_EMAIL")
-	smtpPass := os.Getenv("SMTP_PASSWORD")
+	apiKey := os.Getenv("BREVO_API_KEY")
+	senderEmail := os.Getenv("SMTP_EMAIL")
 	frontendURL := os.Getenv("FRONTEND_URL")
 
 	frontendURL = strings.TrimSpace(frontendURL)
@@ -29,20 +43,18 @@ func SendResetPasswordEmail(toEmail, token string) error {
 		frontendURL = "https://lapkeu.zone.id"
 	}
 
-	if smtpHost == "" || smtpEmail == "" || smtpPass == "" {
-		err := fmt.Errorf("konfigurasi SMTP belum lengkap di environment variable")
-		log.Println("[SMTP ERROR]:", err)
+	if apiKey == "" {
+		err := fmt.Errorf("BREVO_API_KEY belum dikonfigurasi di environment variable")
+		log.Println("[BREVO ERROR]:", err)
 		return err
 	}
 
-	if smtpPort == "" {
-		smtpPort = "465"
+	if senderEmail == "" {
+		senderEmail = "msyasy.care@gmail.com"
 	}
 
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", frontendURL, token)
 
-	subject := "Subject: Reset Password - Lapkeu\n"
-	mime := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
 	htmlBody := fmt.Sprintf(`
 		<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
 			<h2>Permintaan Reset Password</h2>
@@ -58,61 +70,41 @@ func SendResetPasswordEmail(toEmail, token string) error {
 		</div>
 	`, resetLink, resetLink, resetLink)
 
-	msg := []byte(subject + mime + htmlBody)
-
-	// Koneksi SSL langsung via Port 465 dengan Timeout 10 Detik
-	addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
+	payload := BrevoPayload{
+		Sender:      BrevoSender{Name: "Lapkeu App", Email: senderEmail},
+		To:          []BrevoRecipient{{Email: toEmail}},
+		Subject:     "Reset Password - Lapkeu",
+		HtmlContent: htmlBody,
 	}
 
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: false,
-		ServerName:         smtpHost,
-	}
-
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
-	if err != nil {
-		log.Println("[SMTP Dial Error]:", err)
-		return fmt.Errorf("gagal terhubung ke server Gmail: %v", err)
-	}
-	defer conn.Close()
-
-	client, err := smtp.NewClient(conn, smtpHost)
-	if err != nil {
-		log.Println("[SMTP Client Error]:", err)
-		return err
-	}
-	defer client.Quit()
-
-	auth := smtp.PlainAuth("", smtpEmail, smtpPass, smtpHost)
-	if err = client.Auth(auth); err != nil {
-		log.Println("[SMTP Auth Error]:", err)
-		return fmt.Errorf("autentikasi Gmail gagal: %v", err)
-	}
-
-	if err = client.Mail(smtpEmail); err != nil {
-		return err
-	}
-	if err = client.Rcpt(toEmail); err != nil {
-		return err
-	}
-
-	w, err := client.Data()
+	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	_, err = w.Write(msg)
+	req, err := http.NewRequest("POST", "https://api.brevo.com/v3/smtp/email", bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return err
 	}
 
-	err = w.Close()
+	req.Header.Set("api-key", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
+		log.Println("[BREVO ERROR Send]:", err)
 		return err
 	}
+	defer resp.Body.Close()
 
-	log.Println("[SMTP SUCCESS] Email reset password berhasil terkirim ke", toEmail)
+	if resp.StatusCode >= 400 {
+		var errResp map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		log.Println("[BREVO API ERROR]:", errResp)
+		return fmt.Errorf("gagal mengirim email via Brevo API: %v", errResp)
+	}
+
+	log.Println("[BREVO SUCCESS] Email reset password berhasil terkirim ke", toEmail)
 	return nil
 }
