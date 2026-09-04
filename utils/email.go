@@ -1,21 +1,23 @@
 package utils
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
+	"net"
 	"net/smtp"
 	"os"
 	"strings"
+	"time"
 )
 
 func SendResetPasswordEmail(toEmail, token string) error {
-	smtpHost := os.Getenv("SMTP_HOST")     // smtp.gmail.com
-	smtpPort := os.Getenv("SMTP_PORT")     // 587
-	smtpEmail := os.Getenv("SMTP_EMAIL")   // msyasy.care@gmail.com
-	smtpPass := os.Getenv("SMTP_PASSWORD") // App Password
+	smtpHost := os.Getenv("SMTP_HOST")  
+	smtpPort := os.Getenv("SMTP_PORT")
+	smtpEmail := os.Getenv("SMTP_EMAIL")
+	smtpPass := os.Getenv("SMTP_PASSWORD")
 	frontendURL := os.Getenv("FRONTEND_URL")
 
-	// Membersihkan format markdown jika tak sengaja tersimpan di env variable Railway
 	frontendURL = strings.TrimSpace(frontendURL)
 	frontendURL = strings.Trim(frontendURL, "[]")
 	if idx := strings.Index(frontendURL, "]("); idx != -1 {
@@ -34,12 +36,11 @@ func SendResetPasswordEmail(toEmail, token string) error {
 	}
 
 	if smtpPort == "" {
-		smtpPort = "587"
+		smtpPort = "465"
 	}
 
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", frontendURL, token)
 
-	// Format Header & Body Email HTML
 	subject := "Subject: Reset Password - Lapkeu\n"
 	mime := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
 	htmlBody := fmt.Sprintf(`
@@ -59,14 +60,57 @@ func SendResetPasswordEmail(toEmail, token string) error {
 
 	msg := []byte(subject + mime + htmlBody)
 
-	// Autentikasi dan Pengiriman via Gmail SMTP
-	auth := smtp.PlainAuth("", smtpEmail, smtpPass, smtpHost)
+	// Koneksi SSL langsung via Port 465 dengan Timeout 10 Detik
 	addr := fmt.Sprintf("%s:%s", smtpHost, smtpPort)
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+	}
 
-	err := smtp.SendMail(addr, auth, smtpEmail, []string{toEmail}, msg)
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: false,
+		ServerName:         smtpHost,
+	}
+
+	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	if err != nil {
-		log.Println("[SMTP ERROR Send]:", err)
-		return fmt.Errorf("gagal mengirim email via SMTP: %v", err)
+		log.Println("[SMTP Dial Error]:", err)
+		return fmt.Errorf("gagal terhubung ke server Gmail: %v", err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, smtpHost)
+	if err != nil {
+		log.Println("[SMTP Client Error]:", err)
+		return err
+	}
+	defer client.Quit()
+
+	auth := smtp.PlainAuth("", smtpEmail, smtpPass, smtpHost)
+	if err = client.Auth(auth); err != nil {
+		log.Println("[SMTP Auth Error]:", err)
+		return fmt.Errorf("autentikasi Gmail gagal: %v", err)
+	}
+
+	if err = client.Mail(smtpEmail); err != nil {
+		return err
+	}
+	if err = client.Rcpt(toEmail); err != nil {
+		return err
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return err
+	}
+
+	_, err = w.Write(msg)
+	if err != nil {
+		return err
+	}
+
+	err = w.Close()
+	if err != nil {
+		return err
 	}
 
 	log.Println("[SMTP SUCCESS] Email reset password berhasil terkirim ke", toEmail)
