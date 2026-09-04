@@ -3,6 +3,7 @@ package routes
 import (
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"finance-app-be/controllers"
@@ -13,16 +14,27 @@ import (
 
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		allowedOrigin := os.Getenv("FRONTEND_URL")
-		if allowedOrigin == "" {
-			allowedOrigin = "http://localhost:5173"
+		origin := c.Request.Header.Get("Origin")
+		allowedEnvOrigin := os.Getenv("FRONTEND_URL")
+
+		// Daftar domain
+		allowedOrigins := map[string]bool{
+			"http://localhost:5173":            true,
+			"https://lapkeu-msyasy.vercel.app": true,
+			"https://lapkeu.zone.id":           true,
+			"https://www.lapkeu.zone.id":       true,
 		}
 
-		origin := c.Request.Header.Get("Origin")
-		if origin == allowedOrigin || origin == "http://localhost:5173" {
+		if allowedEnvOrigin != "" {
+			allowedOrigins[strings.TrimSuffix(allowedEnvOrigin, "/")] = true
+		}
+
+		if allowedOrigins[origin] {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+		} else if allowedEnvOrigin != "" {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", allowedEnvOrigin)
 		} else {
-			c.Writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 		}
 
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -63,7 +75,7 @@ func SetupRouter() *gin.Engine {
 	// Middlewares Keamanan Utama
 	r.Use(CORSMiddleware())
 	r.Use(SecurityHeadersMiddleware())
-	r.Use(MaxBodySizeMiddleware(2 << 20)) 
+	r.Use(MaxBodySizeMiddleware(2 << 20))
 
 	authRateLimiter := middlewares.RateLimiter(5, 1*time.Minute)
 
