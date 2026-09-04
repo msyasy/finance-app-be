@@ -17,6 +17,9 @@ import (
 	"finance-app-be/utils"
 )
 
+// Inisialisasi In-Memory Rate Limiter khusus Lupa Password
+var forgotPasswordLimiter = utils.NewMemoryRateLimiter()
+
 type RegisterInput struct {
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
@@ -120,11 +123,28 @@ func ForgotPassword(c *gin.Context) {
 		return
 	}
 
+	// 1. Rate Limiting berdasarkan IP Address (Max 3 request / jam)
+	clientIP := c.ClientIP()
+	if !forgotPasswordLimiter.Allow("ip:"+clientIP, 3, time.Hour) {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": "Terlalu banyak permintaan dari perangkat ini. Silakan coba lagi setelah 1 jam.",
+		})
+		return
+	}
+
+	// 2. Rate Limiting berdasarkan Alamat Email (Max 3 request / jam)
+	if !forgotPasswordLimiter.Allow("email:"+input.Email, 3, time.Hour) {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": "Email ini telah meminta reset password terlalu sering. Silakan coba lagi setelah 1 jam.",
+		})
+		return
+	}
+
 	var userId int
 	// Cek apakah email terdaftar
 	err := config.DB.QueryRow("SELECT id FROM users WHERE email = $1", input.Email).Scan(&userId)
 	if err != nil {
-		// Pesan sukses dikembalikan agar email terdaftar tidak mudah ditebak pihak luar (User Enumeration Protection)
+		// Pesan sukses dikembalikan agar email terdaftar tidak mudah ditebak (User Enumeration Protection)
 		c.JSON(http.StatusOK, gin.H{"message": "Jika email terdaftar, instruksi reset password telah dikirim ke email kamu."})
 		return
 	}
