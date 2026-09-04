@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"finance-app-be/config"
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -151,6 +153,7 @@ func DeleteTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Transaksi berhasil dihapus"})
 }
 
+// GET /api/transactions?page=1&limit=10
 func GetTransactions(c *gin.Context) {
 	userID := getUserIDFromTxCtx(c)
 	if userID == 0 {
@@ -158,13 +161,47 @@ func GetTransactions(c *gin.Context) {
 		return
 	}
 
-	rows, err := config.DB.Query(`
+	// Parsing query parameter page dan limit
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "10")
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	offset := (page - 1) * limit
+
+	// 1. Hitung total data transaksi user
+	var totalItems int
+	countQuery := `
+		SELECT COUNT(*) 
+		FROM transactions t 
+		JOIN wallets w ON w.id = t.wallet_id 
+		WHERE w.user_id = $1`
+	err = config.DB.QueryRow(countQuery, userID).Scan(&totalItems)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghitung total data transaksi"})
+		return
+	}
+
+	dataQuery := `
 		SELECT t.id, t.wallet_id, t.category_id, COALESCE(t.type, 'expense') as type, t.amount, t.notes, t.created_at 
 		FROM transactions t 
 		JOIN wallets w ON w.id = t.wallet_id 
 		WHERE w.user_id = $1 
-		ORDER BY t.created_at DESC`, userID)
+		ORDER BY t.created_at DESC, t.id DESC
+		LIMIT $2 OFFSET $3`
 
+	rows, err := config.DB.Query(dataQuery, userID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data transaksi"})
 		return
@@ -189,5 +226,16 @@ func GetTransactions(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": transactions})
+	totalPages := int(math.Ceil(float64(totalItems) / float64(limit)))
+
+	// 3. Kembalikan response berupa data dan metadata pagination
+	c.JSON(http.StatusOK, gin.H{
+		"data": transactions,
+		"pagination": gin.H{
+			"current_page": page,
+			"limit":        limit,
+			"total_items":  totalItems,
+			"total_pages":  totalPages,
+		},
+	})
 }
