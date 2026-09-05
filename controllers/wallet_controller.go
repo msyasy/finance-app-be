@@ -14,6 +14,12 @@ type WalletInput struct {
 	Balance float64 `json:"balance"`
 }
 
+type TransferInput struct {
+	SourceWalletID      int     `json:"source_wallet_id" binding:"required"`
+	DestinationWalletID int     `json:"destination_wallet_id" binding:"required"`
+	Amount              float64 `json:"amount" binding:"required,gt=0"`
+}
+
 func getUserIDFromWalletCtx(c *gin.Context) int {
 	val, exists := c.Get("userID")
 	if !exists {
@@ -44,7 +50,6 @@ func CreateWallet(c *gin.Context) {
 
 	cleanName := strings.TrimSpace(input.Name)
 
-	// Cek apakah dompet dengan nama yang sama sudah ada untuk user ini (Case In-sensitive)
 	var count int
 	err := config.DB.QueryRow("SELECT COUNT(*) FROM wallets WHERE user_id = $1 AND LOWER(name) = LOWER($2)", userID, cleanName).Scan(&count)
 	if err == nil && count > 0 {
@@ -70,7 +75,6 @@ func GetWallets(c *gin.Context) {
 		return
 	}
 
-	// Query tanpa me-Scan created_at agar kompatibel dengan seluruh struktur tabel wallets
 	rows, err := config.DB.Query("SELECT id, user_id, name, balance FROM wallets WHERE user_id = $1 ORDER BY id ASC", userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data dompet"})
@@ -97,7 +101,6 @@ func DeleteWallet(c *gin.Context) {
 		return
 	}
 
-	// Hapus transaksi terkait dompet terlebih dahulu, lalu hapus dompetnya
 	tx, err := config.DB.Begin()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi DB"})
@@ -122,4 +125,72 @@ func DeleteWallet(c *gin.Context) {
 
 	tx.Commit()
 	c.JSON(http.StatusOK, gin.H{"message": "Dompet berhasil dihapus"})
+}
+
+func TransferWallet(c *gin.Context) {
+	var input TransferInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid"})
+		return
+	}
+
+	userID := getUserIDFromWalletCtx(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID tidak valid"})
+		return
+	}
+
+	if input.SourceWalletID == input.DestinationWalletID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dompet asal dan tujuan tidak boleh sama"})
+		return
+	}
+
+	tx, err := config.DB.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi DB"})
+		return
+	}
+
+	var sourceBalance float64
+	err = tx.QueryRow("SELECT balance FROM wallets WHERE id = $1 AND user_id = $2", input.SourceWalletID, userID).Scan(&sourceBalance)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"error": "Dompet asal tidak ditemukan"})
+		return
+	}
+
+	if sourceBalance < input.Amount {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Saldo dompet asal tidak mencukupi"})
+		return
+	}
+
+	var destBalance float64
+	err = tx.QueryRow("SELECT balance FROM wallets WHERE id = $1 AND user_id = $2", input.DestinationWalletID, userID).Scan(&destBalance)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"error": "Dompet tujuan tidak ditemukan"})
+		return
+	}
+
+	_, err = tx.Exec("UPDATE wallets SET balance = balance - $1 WHERE id = $2 AND user_id = $3", input.Amount, input.SourceWalletID, userID)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memotong saldo dompet asal"})
+		return
+	}
+
+	_, err = tx.Exec("UPDATE wallets SET balance = balance + $1 WHERE id = $2 AND user_id = $3", input.Amount, input.DestinationWalletID, userID)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menambah saldo dompet tujuan"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyelesaikan transfer"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Transfer saldo berhasil"})
 }
