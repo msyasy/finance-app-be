@@ -264,3 +264,60 @@ func GetTransactions(c *gin.Context) {
 		},
 	})
 }
+// ==========================================
+// 5. GET MONTHLY CASH FLOW (6 BULAN TERAKHIR)
+// ==========================================
+// GET /api/transactions/cashflow
+func GetMonthlyCashFlow(c *gin.Context) {
+	userID := getUserIDFromTxCtx(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID tidak valid"})
+		return
+	}
+
+	// Query PostgreSQL: Mengambil data 6 bulan terakhir
+	query := `
+		WITH months AS (
+			SELECT generate_series(
+				DATE_TRUNC('month', CURRENT_DATE - INTERVAL '5 months'),
+				DATE_TRUNC('month', CURRENT_DATE),
+				'1 month'::interval
+			)::date AS month_date
+		)
+		SELECT 
+			TO_CHAR(m.month_date, 'Mon YYYY') AS month,
+			COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS income,
+			COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) AS expense
+		FROM months m
+		LEFT JOIN (
+			SELECT t.created_at, t.type, t.amount 
+			FROM transactions t 
+			JOIN wallets w ON w.id = t.wallet_id 
+			WHERE w.user_id = $1
+		) t ON DATE_TRUNC('month', t.created_at) = m.month_date
+		GROUP BY m.month_date
+		ORDER BY m.month_date ASC;`
+
+	rows, err := config.DB.Query(query, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data tren arus kas"})
+		return
+	}
+	defer rows.Close()
+
+	type CashFlowRes struct {
+		Month   string  `json:"month"`
+		Income  float64 `json:"income"`
+		Expense float64 `json:"expense"`
+	}
+
+	cashFlowList := make([]CashFlowRes, 0)
+	for rows.Next() {
+		var item CashFlowRes
+		if err := rows.Scan(&item.Month, &item.Income, &item.Expense); err == nil {
+			cashFlowList = append(cashFlowList, item)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": cashFlowList})
+}

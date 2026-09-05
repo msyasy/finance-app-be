@@ -105,6 +105,7 @@ func SetupRouter() *gin.Engine {
 			// Transaction Routes
 			protected.POST("/transactions", controllers.CreateTransaction)
 			protected.GET("/transactions", controllers.GetTransactions)
+			protected.GET("/transactions/cashflow", controllers.GetMonthlyCashFlow)
 			protected.DELETE("/transactions/:id", controllers.DeleteTransaction)
 		}
 	}
