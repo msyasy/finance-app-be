@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"finance-app-be/config"
-	"finance-app-be/models"
 	"fmt"
 	"math"
 	"net/http"
