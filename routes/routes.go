@@ -94,10 +94,12 @@ func SetupRouter() *gin.Engine {
 			// Category Routes
 			protected.POST("/categories", controllers.CreateCategory)
 			protected.GET("/categories", controllers.GetCategories)
+			protected.PUT("/categories/:id/budget", controllers.SetCategoryBudget) 
 
 			// Wallet Routes
 			protected.POST("/wallets", controllers.CreateWallet)
 			protected.GET("/wallets", controllers.GetWallets)
+			protected.POST("/wallets/transfer", controllers.TransferWallet) 
 			protected.DELETE("/wallets/:id", controllers.DeleteWallet)
 
 			// Transaction Routes
