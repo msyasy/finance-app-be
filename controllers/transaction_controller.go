@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"finance-app-be/config"
+	"finance-app-be/models"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -9,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+
+// 1. STRUCT & HELPER CONTEXT
 type TransactionInput struct {
 	WalletID   int     `json:"wallet_id" binding:"required"`
 	CategoryID int     `json:"category_id" binding:"required"`
@@ -32,6 +36,8 @@ func getUserIDFromTxCtx(c *gin.Context) int {
 	}
 }
 
+
+// 2. CREATE TRANSACTION
 func CreateTransaction(c *gin.Context) {
 	var input TransactionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -95,6 +101,8 @@ func CreateTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Transaksi berhasil dicatat"})
 }
 
+
+// 3. DELETE TRANSACTION
 func DeleteTransaction(c *gin.Context) {
 	id := c.Param("id")
 	userID := getUserIDFromTxCtx(c)
@@ -153,7 +161,9 @@ func DeleteTransaction(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Transaksi berhasil dihapus"})
 }
 
-// GET /api/transactions?page=1&limit=10
+// 4. GET TRANSACTIONS (PAGINATION + DATE RANGE FILTER)
+// ==========================================
+// GET /api/transactions?page=1&limit=10&start_date=2026-09-01&end_date=2026-09-05
 func GetTransactions(c *gin.Context) {
 	userID := getUserIDFromTxCtx(c)
 	if userID == 0 {
@@ -161,7 +171,7 @@ func GetTransactions(c *gin.Context) {
 		return
 	}
 
-	// Parsing query parameter page dan limit
+	// Parsing query parameter page & limit
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "10")
 
@@ -180,28 +190,44 @@ func GetTransactions(c *gin.Context) {
 
 	offset := (page - 1) * limit
 
-	// 1. Hitung total data transaksi user
+	// Parameter Filter Tanggal (Opsional)
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	// Penyusunan Dinamis SQL Query
+	whereClause := "WHERE w.user_id = $1"
+	argsCount := []interface{}{userID}
+	paramIdx := 2
+
+	// Tambahkan filter tanggal jika dikirim dari frontend
+	if startDate != "" && endDate != "" {
+		whereClause += fmt.Sprintf(" AND t.created_at::date BETWEEN $%d AND $%d", paramIdx, paramIdx+1)
+		argsCount = append(argsCount, startDate, endDate)
+		paramIdx += 2
+	}
+
+	// 1. Hitung Total Data sesuai Filter
 	var totalItems int
-	countQuery := `
-		SELECT COUNT(*) 
-		FROM transactions t 
-		JOIN wallets w ON w.id = t.wallet_id 
-		WHERE w.user_id = $1`
-	err = config.DB.QueryRow(countQuery, userID).Scan(&totalItems)
+	countQuery := "SELECT COUNT(*) FROM transactions t JOIN wallets w ON w.id = t.wallet_id " + whereClause
+	err = config.DB.QueryRow(countQuery, argsCount...).Scan(&totalItems)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghitung total data transaksi"})
 		return
 	}
 
-	dataQuery := `
+	// 2. Ambil Data Transaksi dengan Limit & Offset
+	dataArgs := append([]interface{}{}, argsCount...)
+	dataArgs = append(dataArgs, limit, offset)
+
+	dataQuery := fmt.Sprintf(`
 		SELECT t.id, t.wallet_id, t.category_id, COALESCE(t.type, 'expense') as type, t.amount, t.notes, t.created_at 
 		FROM transactions t 
 		JOIN wallets w ON w.id = t.wallet_id 
-		WHERE w.user_id = $1 
-		ORDER BY t.created_at DESC, t.id DESC
-		LIMIT $2 OFFSET $3`
+		%s 
+		ORDER BY t.created_at DESC, t.id DESC 
+		LIMIT $%d OFFSET $%d`, whereClause, paramIdx, paramIdx+1)
 
-	rows, err := config.DB.Query(dataQuery, userID, limit, offset)
+	rows, err := config.DB.Query(dataQuery, dataArgs...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data transaksi"})
 		return
@@ -228,7 +254,7 @@ func GetTransactions(c *gin.Context) {
 
 	totalPages := int(math.Ceil(float64(totalItems) / float64(limit)))
 
-	// 3. Kembalikan response berupa data dan metadata pagination
+	// 3. Kembalikan Response JSON beserta Metadata Pagination
 	c.JSON(http.StatusOK, gin.H{
 		"data": transactions,
 		"pagination": gin.H{
