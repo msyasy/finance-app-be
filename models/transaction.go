@@ -19,7 +19,7 @@ type TransactionInput struct {
 	Type       string  `json:"type" binding:"required"`
 	Amount     float64 `json:"amount" binding:"required"`
 	Notes      string  `json:"notes"`
-	Note       string  `json:"note"` 
+	Note       string  `json:"note"`
 }
 
 func (t *TransactionInput) GetNotes() string {
