@@ -16,6 +16,15 @@ type Transaction struct {
 type TransactionInput struct {
 	WalletID   int     `json:"wallet_id" binding:"required"`
 	CategoryID int     `json:"category_id" binding:"required"`
+	Type       string  `json:"type" binding:"required"`
 	Amount     float64 `json:"amount" binding:"required"`
 	Notes      string  `json:"notes"`
+	Note       string  `json:"note"` 
+}
+
+func (t *TransactionInput) GetNotes() string {
+	if t.Note != "" {
+		return t.Note
+	}
+	return t.Notes
 }
