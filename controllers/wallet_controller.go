@@ -15,9 +15,10 @@ type WalletInput struct {
 }
 
 type TransferInput struct {
-	SourceWalletID      int     `json:"source_wallet_id" binding:"required"`
-	DestinationWalletID int     `json:"destination_wallet_id" binding:"required"`
-	Amount              float64 `json:"amount" binding:"required,gt=0"`
+	SourceWalletID int     `json:"source_wallet_id" binding:"required"`
+	TargetWalletID int     `json:"target_wallet_id" binding:"required"`
+	Amount         float64 `json:"amount" binding:"required,gt=0"`
+	Notes          string  `json:"notes"` // Menangkap catatan opsional dari Frontend
 }
 
 func getUserIDFromWalletCtx(c *gin.Context) int {
@@ -129,8 +130,10 @@ func DeleteWallet(c *gin.Context) {
 
 func TransferWallet(c *gin.Context) {
 	var input TransferInput
+	
+	// Menampilkan error detail jika JSON binding gagal
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format data tidak valid: " + err.Error()})
 		return
 	}
 
@@ -140,7 +143,7 @@ func TransferWallet(c *gin.Context) {
 		return
 	}
 
-	if input.SourceWalletID == input.DestinationWalletID {
+	if input.SourceWalletID == input.TargetWalletID {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Dompet asal dan tujuan tidak boleh sama"})
 		return
 	}
@@ -166,7 +169,7 @@ func TransferWallet(c *gin.Context) {
 	}
 
 	var destBalance float64
-	err = tx.QueryRow("SELECT balance FROM wallets WHERE id = $1 AND user_id = $2", input.DestinationWalletID, userID).Scan(&destBalance)
+	err = tx.QueryRow("SELECT balance FROM wallets WHERE id = $1 AND user_id = $2", input.TargetWalletID, userID).Scan(&destBalance)
 	if err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusNotFound, gin.H{"error": "Dompet tujuan tidak ditemukan"})
@@ -180,13 +183,14 @@ func TransferWallet(c *gin.Context) {
 		return
 	}
 
-	_, err = tx.Exec("UPDATE wallets SET balance = balance + $1 WHERE id = $2 AND user_id = $3", input.Amount, input.DestinationWalletID, userID)
+	_, err = tx.Exec("UPDATE wallets SET balance = balance + $1 WHERE id = $2 AND user_id = $3", input.Amount, input.TargetWalletID, userID)
 	if err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menambah saldo dompet tujuan"})
 		return
 	}
 
+	// Sudah dibersihkan dari tx.JSON yang bikin error kompilasi
 	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyelesaikan transfer"})
 		return
