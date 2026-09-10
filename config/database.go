@@ -37,5 +37,14 @@ func ConnectDB() {
 		log.Fatal("Gagal terhubung ke DB:", err)
 	}
 
+	// Auto Migration: Pastikan kolom pendukung wujud di PostgreSQL Cloud
+	migrationQuery := `
+		ALTER TABLE categories ADD COLUMN IF NOT EXISTS budget_limit NUMERIC DEFAULT 0;
+		ALTER TABLE categories ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'expense';
+		ALTER TABLE transactions ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'expense';
+		ALTER TABLE transactions ADD COLUMN IF NOT EXISTS notes TEXT;
+	`
+	_, _ = DB.Exec(migrationQuery)
+
 	fmt.Println("Berhasil terhubung ke database PostgreSQL!")
 }

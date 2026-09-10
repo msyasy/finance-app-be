@@ -210,7 +210,14 @@ func GetTransactions(c *gin.Context) {
 	dataArgs = append(dataArgs, limit, offset)
 
 	dataQuery := fmt.Sprintf(`
-		SELECT t.id, t.wallet_id, t.category_id, COALESCE(t.type, 'expense') as type, t.amount, COALESCE(t.notes, '') as notes, t.created_at 
+		SELECT 
+			t.id, 
+			t.wallet_id, 
+			COALESCE(t.category_id, 0) as category_id, 
+			COALESCE(t.type, 'expense') as type, 
+			t.amount, 
+			COALESCE(t.notes, '') as notes, 
+			COALESCE(t.created_at::text, '') as created_at 
 		FROM transactions t 
 		JOIN wallets w ON w.id = t.wallet_id 
 		%s 
