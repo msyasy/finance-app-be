@@ -82,6 +82,12 @@ func SetupRouter() *gin.Engine {
 	api := r.Group("/api")
 	{
 		// Public Routes
+		api.GET("/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "ok",
+				"message": "Server is up and running",
+			})
+		})
 		api.POST("/register", controllers.Register)
 		api.POST("/login", authRateLimiter, controllers.Login)
 		api.POST("/forgot-password", authRateLimiter, controllers.ForgotPassword)
