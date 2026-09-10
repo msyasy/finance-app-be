@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -25,6 +26,11 @@ func ConnectDB() {
 	if err != nil {
 		log.Fatal("Gagal membuka koneksi DB:", err)
 	}
+
+	// Konfigurasi Pool Connection untuk stabilitas di Cloud/Railway
+	DB.SetMaxOpenConns(25)
+	DB.SetMaxIdleConns(5)
+	DB.SetConnMaxLifetime(5 * time.Minute)
 
 	err = DB.Ping()
 	if err != nil {
