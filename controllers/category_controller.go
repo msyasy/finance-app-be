@@ -99,6 +99,55 @@ func GetCategories(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": categories})
 }
 
+// DeleteCategory menghapus kategori pribadi yang belum digunakan oleh transaksi.
+// Kategori bawaan (user_id NULL) sengaja tidak dapat dihapus oleh pengguna.
+func DeleteCategory(c *gin.Context) {
+	userID := getUserIDFromCategoryCtx(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID tidak valid"})
+		return
+	}
+
+	categoryID := c.Param("id")
+
+	var transactionCount int
+	err := config.DB.QueryRow(`
+		SELECT COUNT(*)
+		FROM transactions t
+		JOIN categories c ON c.id = t.category_id
+		WHERE c.id = $1 AND c.user_id = $2`, categoryID, userID).Scan(&transactionCount)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memeriksa transaksi kategori"})
+		return
+	}
+	if transactionCount > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Kategori tidak dapat dihapus karena masih digunakan oleh transaksi"})
+		return
+	}
+
+	result, err := config.DB.Exec(
+		"DELETE FROM categories WHERE id = $1 AND user_id = $2",
+		categoryID,
+		userID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus kategori"})
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memverifikasi penghapusan kategori"})
+		return
+	}
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Kategori tidak ditemukan atau merupakan kategori bawaan"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Kategori berhasil dihapus"})
+}
+
 // SetCategoryBudget mengatur batas anggaran bulanan untuk kategori tertentu
 func SetCategoryBudget(c *gin.Context) {
 	categoryID := c.Param("id")
