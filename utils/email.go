@@ -40,7 +40,7 @@ func SendResetPasswordEmail(toEmail, token string) error {
 	}
 
 	if frontendURL == "" {
-		frontendURL = "https://lapkeu.zone.id"
+		frontendURL = "https://lapkeu.msyasy.xyz"
 	}
 
 	if apiKey == "" {
@@ -50,7 +50,7 @@ func SendResetPasswordEmail(toEmail, token string) error {
 	}
 
 	if senderEmail == "" {
-		senderEmail = "msyasy.care@gmail.com"
+		senderEmail = "noreply@msyasy.xyz"
 	}
 
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", frontendURL, token)
