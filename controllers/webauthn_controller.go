@@ -141,6 +141,7 @@ func fetchUserCredentials(userID int) []webauthn.Credential {
 		SELECT credential_id, public_key, attestation_type, sign_count, user_present, user_verified, backup_eligible, backup_state
 		FROM webauthn_credentials WHERE user_id = $1`, userID)
 	if err != nil {
+		log.Printf("[FETCH CREDENTIALS DB ERROR]: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -149,11 +150,26 @@ func fetchUserCredentials(userID int) []webauthn.Credential {
 	for rows.Next() {
 		var c webauthn.Credential
 		var attType string
-		if err := rows.Scan(&c.ID, &c.PublicKey, &attType, &c.Authenticator.SignCount, &c.Authenticator.CloneWarning, &c.Authenticator.Attachment, &c.Flags.BackupEligible, &c.Flags.BackupState); err == nil {
-			c.AttestationType = attType
-			creds = append(creds, c)
+		var signCount int64
+		err := rows.Scan(
+			&c.ID,
+			&c.PublicKey,
+			&attType,
+			&signCount,
+			&c.Flags.UserPresent,
+			&c.Flags.UserVerified,
+			&c.Flags.BackupEligible,
+			&c.Flags.BackupState,
+		)
+		if err != nil {
+			log.Printf("[FETCH CREDENTIALS SCAN ERROR]: %v", err)
+			continue
 		}
+		c.AttestationType = attType
+		c.Authenticator.SignCount = uint32(signCount)
+		creds = append(creds, c)
 	}
+	log.Printf("[FETCH CREDENTIALS SUCCESS]: Loaded %d credentials for userID %d", len(creds), userID)
 	return creds
 }
 
