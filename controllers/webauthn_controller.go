@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -236,6 +237,7 @@ func FinishRegistration(c *gin.Context) {
 
 	credential, err := wHandler.FinishRegistration(user, sessionData, c.Request)
 	if err != nil {
+		log.Printf("[WEBAUTHN FINISH REGISTRATION ERROR]: %v (User: %s)", err, user.Email)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Verifikasi biometrik gagal: " + err.Error()})
 		return
 	}
@@ -247,6 +249,7 @@ func FinishRegistration(c *gin.Context) {
 		ON CONFLICT (credential_id) DO UPDATE SET public_key = EXCLUDED.public_key, sign_count = EXCLUDED.sign_count`,
 		userID, credential.ID, credential.PublicKey, credential.AttestationType, credential.Authenticator.SignCount, credential.Flags.BackupEligible, credential.Flags.BackupState)
 	if err != nil {
+		log.Printf("[WEBAUTHN DB SAVE ERROR]: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan data biometrik"})
 		return
 	}
