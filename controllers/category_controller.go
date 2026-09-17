@@ -99,8 +99,9 @@ func GetCategories(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": categories})
 }
 
-// DeleteCategory menghapus kategori pribadi yang belum digunakan oleh transaksi.
-// Kategori bawaan (user_id NULL) sengaja tidak dapat dihapus oleh pengguna.
+// DeleteCategory menghapus kategori.
+// Jika kategori sedang digunakan oleh transaksi, category_id pada transaksi di-set ke NULL
+// agar histori transaksi pengguna tetap aman dan kategori berhasil dihapus.
 func DeleteCategory(c *gin.Context) {
 	userID := getUserIDFromCategoryCtx(c)
 	if userID == 0 {
@@ -110,38 +111,32 @@ func DeleteCategory(c *gin.Context) {
 
 	categoryID := c.Param("id")
 
-	var transactionCount int
-	err := config.DB.QueryRow(`
-		SELECT COUNT(*)
-		FROM transactions t
-		JOIN categories c ON c.id = t.category_id
-		WHERE c.id = $1 AND c.user_id = $2`, categoryID, userID).Scan(&transactionCount)
+	tx, err := config.DB.Begin()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memeriksa transaksi kategori"})
-		return
-	}
-	if transactionCount > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Kategori tidak dapat dihapus karena masih digunakan oleh transaksi"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai transaksi DB"})
 		return
 	}
 
-	result, err := config.DB.Exec(
-		"DELETE FROM categories WHERE id = $1 AND user_id = $2",
-		categoryID,
-		userID,
-	)
+	// 1. Lepaskan relasi transaksi (set category_id ke NULL) agar transaksi tidak terhapus
+	_, _ = tx.Exec("UPDATE transactions SET category_id = NULL WHERE category_id = $1", categoryID)
+
+	// 2. Hapus kategori (pribadi maupun bawaan)
+	res, err := tx.Exec("DELETE FROM categories WHERE id = $1 AND (user_id = $2 OR user_id IS NULL)", categoryID, userID)
 	if err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus kategori"})
 		return
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memverifikasi penghapusan kategori"})
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"error": "Kategori tidak ditemukan"})
 		return
 	}
-	if rowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Kategori tidak ditemukan atau merupakan kategori bawaan"})
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan perubahan"})
 		return
 	}
 
