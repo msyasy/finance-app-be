@@ -93,10 +93,18 @@ func SetupRouter() *gin.Engine {
 		api.POST("/forgot-password", authRateLimiter, controllers.ForgotPassword)
 		api.POST("/reset-password", controllers.ResetPassword)
 
+		// WebAuthn Biometric Routes (Public)
+		api.POST("/webauthn/login/begin", controllers.BeginLogin)
+		api.POST("/webauthn/login/finish", controllers.FinishLogin)
+
 		// Protected Routes (Wajib Token JWT)
 		protected := api.Group("/")
 		protected.Use(middlewares.AuthMiddleware())
 		{
+			// WebAuthn Biometric Routes (Protected)
+			protected.POST("/webauthn/register/begin", controllers.BeginRegistration)
+			protected.POST("/webauthn/register/finish", controllers.FinishRegistration)
+
 			// Category Routes
 			protected.POST("/categories", controllers.CreateCategory)
 			protected.GET("/categories", controllers.GetCategories)
