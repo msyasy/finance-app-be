@@ -3,9 +3,11 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"finance-app-be/config"
@@ -17,34 +19,42 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var webAuthnHandler *webauthn.WebAuthn
-
-func initWebAuthn() error {
-	if webAuthnHandler != nil {
-		return nil
+func getWebAuthnHandler(c *gin.Context) (*webauthn.WebAuthn, error) {
+	// Ambil host dari request secara dinamis (misal: "lapkeu.msyasy.xyz" atau "lapkeu.zone.id")
+	host := c.Request.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
 	}
 
 	rpID := os.Getenv("WEBAUTHN_RP_ID")
 	if rpID == "" {
-		rpID = "localhost"
+		rpID = host
 	}
 
-	rpOrigin := os.Getenv("WEBAUTHN_RP_ORIGIN")
-	origins := []string{"http://localhost:5173", "https://lapkeu.zone.id", "https://lapkeu-msyasy.vercel.app"}
-	if rpOrigin != "" {
-		origins = append(origins, rpOrigin)
+	origins := []string{
+		"http://localhost:5173",
+		"https://lapkeu.zone.id",
+		"https://www.lapkeu.zone.id",
+		"https://lapkeu-msyasy.vercel.app",
+		"https://lapkeu.msyasy.xyz",
+		"https://www.lapkeu.msyasy.xyz",
 	}
 
-	w, err := webauthn.New(&webauthn.Config{
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL != "" {
+		cleanURL := strings.TrimSuffix(frontendURL, "/")
+		origins = append(origins, cleanURL)
+	}
+
+	if host != "" && !strings.HasPrefix(host, "localhost") {
+		origins = append(origins, "https://"+host)
+	}
+
+	return webauthn.New(&webauthn.Config{
 		RPDisplayName: "LapKeu Finance",
 		RPID:          rpID,
 		RPOrigins:     origins,
 	})
-	if err != nil {
-		return err
-	}
-	webAuthnHandler = w
-	return nil
 }
 
 type WebAuthnUser struct {
@@ -131,8 +141,9 @@ func fetchUserCredentials(userID int) []webauthn.Credential {
 
 // 1. Begin Registration (POST /api/webauthn/register/begin) - Protected
 func BeginRegistration(c *gin.Context) {
-	if err := initWebAuthn(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal inisialisasi WebAuthn"})
+	wHandler, err := getWebAuthnHandler(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal inisialisasi WebAuthn: " + err.Error()})
 		return
 	}
 
@@ -148,7 +159,7 @@ func BeginRegistration(c *gin.Context) {
 		return
 	}
 
-	options, sessionData, err := webAuthnHandler.BeginRegistration(user,
+	options, sessionData, err := wHandler.BeginRegistration(user,
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
 			UserVerification: protocol.VerificationPreferred,
 		}),
@@ -174,7 +185,8 @@ func BeginRegistration(c *gin.Context) {
 
 // 2. Finish Registration (POST /api/webauthn/register/finish) - Protected
 func FinishRegistration(c *gin.Context) {
-	if err := initWebAuthn(); err != nil {
+	wHandler, err := getWebAuthnHandler(c)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal inisialisasi WebAuthn"})
 		return
 	}
@@ -205,7 +217,7 @@ func FinishRegistration(c *gin.Context) {
 		return
 	}
 
-	credential, err := webAuthnHandler.FinishRegistration(user, sessionData, c.Request)
+	credential, err := wHandler.FinishRegistration(user, sessionData, c.Request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Verifikasi biometrik gagal: " + err.Error()})
 		return
@@ -230,7 +242,8 @@ func FinishRegistration(c *gin.Context) {
 
 // 3. Begin Login (POST /api/webauthn/login/begin) - Public
 func BeginLogin(c *gin.Context) {
-	if err := initWebAuthn(); err != nil {
+	wHandler, err := getWebAuthnHandler(c)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal inisialisasi WebAuthn"})
 		return
 	}
@@ -249,7 +262,7 @@ func BeginLogin(c *gin.Context) {
 		return
 	}
 
-	options, sessionData, err := webAuthnHandler.BeginLogin(user)
+	options, sessionData, err := wHandler.BeginLogin(user)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai login biometrik: " + err.Error()})
 		return
@@ -273,7 +286,8 @@ func BeginLogin(c *gin.Context) {
 
 // 4. Finish Login (POST /api/webauthn/login/finish) - Public
 func FinishLogin(c *gin.Context) {
-	if err := initWebAuthn(); err != nil {
+	wHandler, err := getWebAuthnHandler(c)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal inisialisasi WebAuthn"})
 		return
 	}
@@ -305,10 +319,15 @@ func FinishLogin(c *gin.Context) {
 		return
 	}
 
-	credential, err := webAuthnHandler.FinishLogin(user, sessionData, c.Request)
+	credential, err := wHandler.FinishRegistration(user, sessionData, c.Request)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Verifikasi biometrik gagal: " + err.Error()})
-		return
+		// Try FinishLogin as well
+		credLogin, errLogin := wHandler.FinishLogin(user, sessionData, c.Request)
+		if errLogin != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Verifikasi biometrik gagal: " + err.Error()})
+			return
+		}
+		credential = credLogin
 	}
 
 	// Update sign count
