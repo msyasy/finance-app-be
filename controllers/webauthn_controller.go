@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -20,14 +21,29 @@ import (
 )
 
 func getWebAuthnHandler(c *gin.Context) (*webauthn.WebAuthn, error) {
-	// Ambil host dari request secara dinamis (misal: "lapkeu.msyasy.xyz" atau "lapkeu.zone.id")
-	host := c.Request.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
+	// 1. Cek jika WEBAUTHN_RP_ID diset manual di environment variable
+	rpID := os.Getenv("WEBAUTHN_RP_ID")
+
+	// 2. Jika tidak diset, ambil domain browser pengguna dari Header "Origin" atau "Referer"
+	if rpID == "" {
+		originHeader := c.Request.Header.Get("Origin")
+		if originHeader == "" {
+			originHeader = c.Request.Header.Get("Referer")
+		}
+
+		if originHeader != "" {
+			if parsedURL, err := url.Parse(originHeader); err == nil && parsedURL.Hostname() != "" {
+				rpID = parsedURL.Hostname()
+			}
+		}
 	}
 
-	rpID := os.Getenv("WEBAUTHN_RP_ID")
+	// 3. Fallback ke Host request
 	if rpID == "" {
+		host := c.Request.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
 		rpID = host
 	}
 
@@ -46,8 +62,9 @@ func getWebAuthnHandler(c *gin.Context) (*webauthn.WebAuthn, error) {
 		origins = append(origins, cleanURL)
 	}
 
-	if host != "" && !strings.HasPrefix(host, "localhost") {
-		origins = append(origins, "https://"+host)
+	if rpID != "" && rpID != "localhost" {
+		origins = append(origins, "https://"+rpID)
+		origins = append(origins, "http://"+rpID)
 	}
 
 	return webauthn.New(&webauthn.Config{
