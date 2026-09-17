@@ -355,15 +355,11 @@ func FinishLogin(c *gin.Context) {
 		return
 	}
 
-	credential, err := wHandler.FinishRegistration(user, sessionData, c.Request)
+	credential, err := wHandler.FinishLogin(user, sessionData, c.Request)
 	if err != nil {
-		// Try FinishLogin as well
-		credLogin, errLogin := wHandler.FinishLogin(user, sessionData, c.Request)
-		if errLogin != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Verifikasi biometrik gagal: " + err.Error()})
-			return
-		}
-		credential = credLogin
+		log.Printf("[WEBAUTHN FINISH LOGIN ERROR]: %v (User: %s)", err, user.Email)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Verifikasi biometrik gagal: " + err.Error()})
+		return
 	}
 
 	// Update sign count
