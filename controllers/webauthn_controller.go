@@ -176,10 +176,10 @@ func BeginRegistration(c *gin.Context) {
 		return
 	}
 
-	// Ditambahkan RequireResidentKey agar menyimpan data akun di perangkat (Passkey Usernameless)
+	// Fix 1: protocol.ResidentKeyRequirementRequired tanpa kurung ()
 	options, sessionData, err := wHandler.BeginRegistration(user,
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
-			RequireResidentKey: protocol.ResidentKeyRequirementRequired(),
+			RequireResidentKey: protocol.ResidentKeyRequirementRequired,
 			UserVerification:   protocol.VerificationPreferred,
 		}),
 	)
@@ -269,7 +269,6 @@ func BeginLogin(c *gin.Context) {
 		return
 	}
 
-	// Tanpa input email: Menggunakan BeginDiscoverableLogin agar browser mencari Passkey di perangkat
 	options, sessionData, err := wHandler.BeginDiscoverableLogin(
 		webauthn.WithUserVerification(protocol.VerificationPreferred),
 	)
@@ -313,13 +312,12 @@ func FinishLogin(c *gin.Context) {
 
 	var sessionJSON string
 	var challengeKey string
-	var err error
 
+	// Fix 2: Menghapus pendeklarasian ulang `var err error`
 	if sessionID != "" {
 		challengeKey = sessionID
 		err = config.DB.QueryRow("SELECT session_data FROM webauthn_sessions WHERE challenge_id = $1 AND expires_at > NOW()", challengeKey).Scan(&sessionJSON)
 	} else {
-		// Fallback: Ambil sesi login biometrik terbaru yang belum kadaluarsa
 		err = config.DB.QueryRow("SELECT challenge_id, session_data FROM webauthn_sessions WHERE challenge_id LIKE 'log_%' AND expires_at > NOW() ORDER BY expires_at DESC LIMIT 1").Scan(&challengeKey, &sessionJSON)
 	}
 
@@ -334,7 +332,6 @@ func FinishLogin(c *gin.Context) {
 		return
 	}
 
-	// Autentikasi Usernameless: User dikenali dari userHandle yang dikembalikan oleh perangkat
 	var authenticatedUser *WebAuthnUser
 
 	credential, err := wHandler.FinishDiscoverableLogin(
