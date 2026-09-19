@@ -119,23 +119,6 @@ func getWebAuthnUserByID(userID int) (*WebAuthnUser, error) {
 	}, nil
 }
 
-func getWebAuthnUserByEmail(email string) (*WebAuthnUser, error) {
-	var user models.User
-	err := config.DB.QueryRow("SELECT id, name, email FROM users WHERE email = $1", email).Scan(&user.ID, &user.Name, &user.Email)
-	if err != nil {
-		return nil, err
-	}
-
-	creds := fetchUserCredentials(user.ID)
-
-	return &WebAuthnUser{
-		ID:          user.ID,
-		Email:       user.Email,
-		Name:        user.Name,
-		Credentials: creds,
-	}, nil
-}
-
 func fetchUserCredentials(userID int) []webauthn.Credential {
 	rows, err := config.DB.Query(`
 		SELECT credential_id, public_key, attestation_type, sign_count, user_present, user_verified, backup_eligible, backup_state
@@ -193,9 +176,11 @@ func BeginRegistration(c *gin.Context) {
 		return
 	}
 
+	// Ditambahkan RequireResidentKey agar menyimpan data akun di perangkat (Passkey Usernameless)
 	options, sessionData, err := wHandler.BeginRegistration(user,
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
-			UserVerification: protocol.VerificationPreferred,
+			RequireResidentKey: protocol.ResidentKeyRequirementRequired(),
+			UserVerification:   protocol.VerificationPreferred,
 		}),
 	)
 	if err != nil {
@@ -284,39 +269,29 @@ func BeginLogin(c *gin.Context) {
 		return
 	}
 
-	var input struct {
-		Email string `json:"email" binding:"required,email"`
-	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Email wajib diisi untuk login biometrik"})
-		return
-	}
-
-	user, err := getWebAuthnUserByEmail(input.Email)
-	if err != nil || len(user.Credentials) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Akun ini belum mendaftarkan autentikasi biometrik"})
-		return
-	}
-
-	options, sessionData, err := wHandler.BeginLogin(user)
+	// Tanpa input email: Menggunakan BeginDiscoverableLogin agar browser mencari Passkey di perangkat
+	options, sessionData, err := wHandler.BeginDiscoverableLogin(
+		webauthn.WithUserVerification(protocol.VerificationPreferred),
+	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memulai login biometrik: " + err.Error()})
 		return
 	}
 
 	sessBytes, _ := json.Marshal(sessionData)
-	challengeKey := fmt.Sprintf("log_%d", user.ID)
+	challengeKey := fmt.Sprintf("log_%s", sessionData.Challenge)
+
 	_, _ = config.DB.Exec("DELETE FROM webauthn_sessions WHERE challenge_id = $1", challengeKey)
 	_, err = config.DB.Exec("INSERT INTO webauthn_sessions (challenge_id, user_id, session_data, expires_at) VALUES ($1, $2, $3, $4)",
-		challengeKey, user.ID, string(sessBytes), time.Now().Add(5*time.Minute))
+		challengeKey, 0, string(sessBytes), time.Now().Add(5*time.Minute))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan sesi login biometrik"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"options": options,
-		"user_id": user.ID,
+		"options":    options,
+		"session_id": challengeKey,
 	})
 }
 
@@ -328,24 +303,28 @@ func FinishLogin(c *gin.Context) {
 		return
 	}
 
-	userIDStr := c.Query("user_id")
-	userID, _ := strconv.Atoi(userIDStr)
-	if userID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID tidak valid"})
-		return
+	sessionID := c.Query("session_id")
+	if sessionID == "" {
+		userIDStr := c.Query("user_id")
+		if userIDStr != "" {
+			sessionID = fmt.Sprintf("log_%s", userIDStr)
+		}
 	}
 
-	user, err := getWebAuthnUserByID(userID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User tidak ditemukan"})
-		return
-	}
-
-	challengeKey := fmt.Sprintf("log_%d", userID)
 	var sessionJSON string
-	err = config.DB.QueryRow("SELECT session_data FROM webauthn_sessions WHERE challenge_id = $1 AND user_id = $2", challengeKey, userID).Scan(&sessionJSON)
+	var challengeKey string
+	var err error
+
+	if sessionID != "" {
+		challengeKey = sessionID
+		err = config.DB.QueryRow("SELECT session_data FROM webauthn_sessions WHERE challenge_id = $1 AND expires_at > NOW()", challengeKey).Scan(&sessionJSON)
+	} else {
+		// Fallback: Ambil sesi login biometrik terbaru yang belum kadaluarsa
+		err = config.DB.QueryRow("SELECT challenge_id, session_data FROM webauthn_sessions WHERE challenge_id LIKE 'log_%' AND expires_at > NOW() ORDER BY expires_at DESC LIMIT 1").Scan(&challengeKey, &sessionJSON)
+	}
+
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Sesi login biometrik kadaluarsa"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Sesi login biometrik kadaluarsa atau tidak ditemukan"})
 		return
 	}
 
@@ -355,14 +334,35 @@ func FinishLogin(c *gin.Context) {
 		return
 	}
 
-	credential, err := wHandler.FinishLogin(user, sessionData, c.Request)
-	if err != nil {
-		log.Printf("[WEBAUTHN FINISH LOGIN ERROR]: %v (User: %s)", err, user.Email)
+	// Autentikasi Usernameless: User dikenali dari userHandle yang dikembalikan oleh perangkat
+	var authenticatedUser *WebAuthnUser
+
+	credential, err := wHandler.FinishDiscoverableLogin(
+		func(rawID, userHandle []byte) (webauthn.User, error) {
+			userIDStr := string(userHandle)
+			userID, parseErr := strconv.Atoi(userIDStr)
+			if parseErr != nil {
+				return nil, fmt.Errorf("userHandle tidak valid: %v", parseErr)
+			}
+
+			u, dbErr := getWebAuthnUserByID(userID)
+			if dbErr != nil {
+				return nil, fmt.Errorf("user tidak ditemukan: %v", dbErr)
+			}
+			authenticatedUser = u
+			return u, nil
+		},
+		sessionData,
+		c.Request,
+	)
+
+	if err != nil || authenticatedUser == nil {
+		log.Printf("[WEBAUTHN FINISH LOGIN ERROR]: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Verifikasi biometrik gagal: " + err.Error()})
 		return
 	}
 
-	// Update sign count
+	// Update sign count & Hapus sesi
 	_, _ = config.DB.Exec("UPDATE webauthn_credentials SET sign_count = $1 WHERE credential_id = $2", credential.Authenticator.SignCount, credential.ID)
 	_, _ = config.DB.Exec("DELETE FROM webauthn_sessions WHERE challenge_id = $1", challengeKey)
 
@@ -373,7 +373,7 @@ func FinishLogin(c *gin.Context) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID,
+		"user_id": authenticatedUser.ID,
 		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	})
 	tokenString, err := token.SignedString([]byte(jwtSecretStr))
@@ -385,9 +385,9 @@ func FinishLogin(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"token": tokenString,
 		"user": gin.H{
-			"id":    user.ID,
-			"name":  user.Name,
-			"email": user.Email,
+			"id":    authenticatedUser.ID,
+			"name":  authenticatedUser.Name,
+			"email": authenticatedUser.Email,
 		},
 	})
 }
