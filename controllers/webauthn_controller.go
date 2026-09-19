@@ -176,7 +176,6 @@ func BeginRegistration(c *gin.Context) {
 		return
 	}
 
-	// Perbaikan: RequireResidentKey menggunakan pointer boolean, ResidentKey menggunakan konstanta string
 	requireRK := true
 	options, sessionData, err := wHandler.BeginRegistration(user,
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
@@ -190,7 +189,6 @@ func BeginRegistration(c *gin.Context) {
 		return
 	}
 
-	// Simpan sessionData ke DB
 	sessBytes, _ := json.Marshal(sessionData)
 	challengeKey := fmt.Sprintf("reg_%d", userID)
 	_, _ = config.DB.Exec("DELETE FROM webauthn_sessions WHERE challenge_id = $1", challengeKey)
@@ -233,7 +231,7 @@ func FinishRegistration(c *gin.Context) {
 	}
 
 	var sessionData webauthn.SessionData
-	if err := json.Unmarshal([]byte(sessionJSON), &sessionData); err != nil {
+	if err = json.Unmarshal([]byte(sessionJSON), &sessionData); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Format sesi tidak valid"})
 		return
 	}
@@ -245,7 +243,6 @@ func FinishRegistration(c *gin.Context) {
 		return
 	}
 
-	// Simpan credential ke DB
 	_, err = config.DB.Exec(`
 		INSERT INTO webauthn_credentials (user_id, credential_id, public_key, attestation_type, sign_count, backup_eligible, backup_state)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -257,7 +254,6 @@ func FinishRegistration(c *gin.Context) {
 		return
 	}
 
-	// Hapus sesi
 	_, _ = config.DB.Exec("DELETE FROM webauthn_sessions WHERE challenge_id = $1", challengeKey)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Biometrik (Passkey) berhasil didaftarkan!"})
@@ -271,7 +267,6 @@ func BeginLogin(c *gin.Context) {
 		return
 	}
 
-	// Tanpa input email: Menggunakan BeginDiscoverableLogin agar browser mencari Passkey di perangkat
 	options, sessionData, err := wHandler.BeginDiscoverableLogin(
 		webauthn.WithUserVerification(protocol.VerificationPreferred),
 	)
@@ -315,13 +310,12 @@ func FinishLogin(c *gin.Context) {
 
 	var sessionJSON string
 	var challengeKey string
-	var err error
 
+	// Memakai variabel 'err' yang sudah ada di scope fungsi FinishLogin (tanpa var / :=)
 	if sessionID != "" {
 		challengeKey = sessionID
 		err = config.DB.QueryRow("SELECT session_data FROM webauthn_sessions WHERE challenge_id = $1 AND expires_at > NOW()", challengeKey).Scan(&sessionJSON)
 	} else {
-		// Fallback: Ambil sesi login biometrik terbaru yang belum kadaluarsa
 		err = config.DB.QueryRow("SELECT challenge_id, session_data FROM webauthn_sessions WHERE challenge_id LIKE 'log_%' AND expires_at > NOW() ORDER BY expires_at DESC LIMIT 1").Scan(&challengeKey, &sessionJSON)
 	}
 
@@ -336,7 +330,6 @@ func FinishLogin(c *gin.Context) {
 		return
 	}
 
-	// Autentikasi Usernameless: User dikenali dari userHandle yang dikembalikan oleh perangkat
 	var authenticatedUser *WebAuthnUser
 	var credential *webauthn.Credential
 
@@ -365,11 +358,9 @@ func FinishLogin(c *gin.Context) {
 		return
 	}
 
-	// Update sign count & Hapus sesi
 	_, _ = config.DB.Exec("UPDATE webauthn_credentials SET sign_count = $1 WHERE credential_id = $2", credential.Authenticator.SignCount, credential.ID)
 	_, _ = config.DB.Exec("DELETE FROM webauthn_sessions WHERE challenge_id = $1", challengeKey)
 
-	// Buat JWT Token untuk login
 	jwtSecretStr := os.Getenv("JWT_SECRET")
 	if jwtSecretStr == "" {
 		jwtSecretStr = "secretkeyrahasia"
