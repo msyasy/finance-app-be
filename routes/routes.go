@@ -88,7 +88,7 @@ func SetupRouter() *gin.Engine {
 	api.Use(globalApiLimiter)
 	{
 		// Public Routes
-		r.GET("/api/health", func(c *gin.Context) {
+		r.Any("/health", func(c *gin.Context) {
     		c.JSON(http.StatusOK, gin.H{
 				"status":  "ok",
 				"message": "Backend is running smoothly",
