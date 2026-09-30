@@ -88,10 +88,10 @@ func SetupRouter() *gin.Engine {
 	api.Use(globalApiLimiter)
 	{
 		// Public Routes
-		api.GET("/health", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
+		r.GET("/api/health", func(c *gin.Context) {
+    		c.JSON(http.StatusOK, gin.H{
 				"status":  "ok",
-				"message": "Server is up and running",
+				"message": "Backend is running smoothly",
 			})
 		})
 		api.POST("/register", strictAuthLimiter, controllers.Register)
