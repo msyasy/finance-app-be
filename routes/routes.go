@@ -62,7 +62,7 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 	}
 }
 
-// MaxBodySizeMiddleware membatasi ukuran request body (mencegah DoS payload raksasa / Malformed Giant Payloads)
+// MaxBodySizeMiddleware membatasi ukuran request body (mencegah DoS payload raksasa / Malformed Giant Payloads)[cite: 6]
 func MaxBodySizeMiddleware(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
@@ -78,17 +78,17 @@ func SetupRouter() *gin.Engine {
 	// Middlewares Keamanan Utama
 	r.Use(CORSMiddleware())
 	r.Use(SecurityHeadersMiddleware())
-	r.Use(MaxBodySizeMiddleware(2 << 20)) // Max 2MB Body Payload
+	r.Use(MaxBodySizeMiddleware(2 << 20)) // Max 2MB Body Payload[cite: 6]
 
-	// Rate Limiting Ketat (Mencegah Brute-Force & Flood DoS Attacks)
-	globalApiLimiter := middlewares.RateLimiter(60, 1*time.Minute) // Max 60 req/min per IP untuk seluruh API
-	strictAuthLimiter := middlewares.RateLimiter(5, 1*time.Minute) // Max 5 req/min per IP untuk Autentikasi / Sensitif
+	// Rate Limiting Ketat (Mencegah Brute-Force & Flood DoS Attacks)[cite: 1]
+	globalApiLimiter := middlewares.RateLimiter(60, 1*time.Minute) // Max 60 req/min per IP untuk seluruh API[cite: 1]
+	strictAuthLimiter := middlewares.RateLimiter(5, 1*time.Minute) // Max 5 req/min per IP untuk Autentikasi / Sensitif[cite: 1]
 
 	api := r.Group("/api")
 	api.Use(globalApiLimiter)
 	{
-		// Public Routes
-		r.Any("/health", func(c *gin.Context) {
+		// Public Routes (Health Check dipindah ke dalam group api agar menjadi /api/health)
+		api.Any("/health", func(c *gin.Context) {
     		c.JSON(http.StatusOK, gin.H{
 				"status":  "ok",
 				"message": "Backend is running smoothly",
