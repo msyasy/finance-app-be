@@ -5,11 +5,9 @@ import (
 	"encoding/hex"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
 	"finance-app-be/config"
@@ -84,19 +82,11 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID,
-		"exp":     time.Now().Add(time.Hour * 24).Unix(),
-	})
-
-	jwtSecretStr := os.Getenv("JWT_SECRET")
-	if jwtSecretStr == "" {
-		log.Println("[SECURITY WARNING]: JWT_SECRET tidak di-set di environment variables!")
-		jwtSecretStr = "secretkeyrahasia"
-	}
-
-	tokenString, err := token.SignedString([]byte(jwtSecretStr))
+	// Token dibuat lewat issueJWT (controllers/sso_controller.go): tanpa secret cadangan,
+	// dan sama persis dengan token login passkey dan SSO.
+	tokenString, err := issueJWT(user.ID)
 	if err != nil {
+		log.Println("[LOGIN ERROR]:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat token"})
 		return
 	}

@@ -99,6 +99,9 @@ func SetupRouter() *gin.Engine {
 		api.POST("/forgot-password", strictAuthLimiter, controllers.ForgotPassword)
 		api.POST("/reset-password", strictAuthLimiter, controllers.ResetPassword)
 
+		// SSO LowonganKita: tukar kode sekali pakai menjadi sesi LapKeu
+		api.POST("/sso/exchange", strictAuthLimiter, controllers.SSOExchange)
+
 		// WebAuthn Biometric Routes (Public)
 		api.POST("/webauthn/login/begin", strictAuthLimiter, controllers.BeginLogin)
 		api.POST("/webauthn/login/finish", strictAuthLimiter, controllers.FinishLogin)
