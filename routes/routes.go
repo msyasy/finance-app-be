@@ -73,6 +73,9 @@ func MaxBodySizeMiddleware(maxBytes int64) gin.HandlerFunc {
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
+	// Render berada di belakang Cloudflare: IP asli pengunjung ada di header CF-Connecting-IP
+	// (Cloudflare menolak request klien yang membawa header itu, jadi tidak bisa dipalsukan).
+	r.TrustedPlatform = gin.PlatformCloudflare
 	r.SetTrustedProxies(nil)
 
 	// Middlewares Keamanan Utama
