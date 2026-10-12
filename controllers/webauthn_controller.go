@@ -18,7 +18,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 func getWebAuthnHandler(c *gin.Context) (*webauthn.WebAuthn, error) {
@@ -353,25 +352,23 @@ func FinishLogin(c *gin.Context) {
 	)
 
 	if err != nil || authenticatedUser == nil {
+		// err bisa nil kalau authenticatedUser kosong, jadi jangan memanggil err.Error() di sini.
 		log.Printf("[WEBAUTHN FINISH LOGIN ERROR]: %v", err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Verifikasi biometrik gagal: " + err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Verifikasi biometrik gagal"})
 		return
+	}
+
+	if credential.Authenticator.CloneWarning {
+		log.Printf("[WEBAUTHN WARNING]: sign count tidak naik, kemungkinan passkey tersalin (user %d)", authenticatedUser.ID)
 	}
 
 	_, _ = config.DB.Exec("UPDATE webauthn_credentials SET sign_count = $1 WHERE credential_id = $2", credential.Authenticator.SignCount, credential.ID)
 	_, _ = config.DB.Exec("DELETE FROM webauthn_sessions WHERE challenge_id = $1", challengeKey)
 
-	jwtSecretStr := os.Getenv("JWT_SECRET")
-	if jwtSecretStr == "" {
-		jwtSecretStr = "secretkeyrahasia"
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": authenticatedUser.ID,
-		"exp":     time.Now().Add(time.Hour * 24).Unix(),
-	})
-	tokenString, err := token.SignedString([]byte(jwtSecretStr))
+	// Token dibuat lewat issueJWT (controllers/sso_controller.go), sama seperti login biasa dan SSO.
+	tokenString, err := issueJWT(authenticatedUser.ID)
 	if err != nil {
+		log.Println("[WEBAUTHN LOGIN ERROR]:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat token login"})
 		return
 	}

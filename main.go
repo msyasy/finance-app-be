@@ -11,17 +11,22 @@ import (
 )
 
 func main() {
+	// Pengecekan JWT_SECRET sebelum koneksi database dan server berjalan
+	if os.Getenv("JWT_SECRET") == "" {
+		log.Fatal("JWT_SECRET wajib di-set")
+	}
+
 	config.ConnectDB()
 
 	r := routes.SetupRouter()
 
-	// Ambil PORT dari Railway, kalau tidak ada pakai 8080 (lokal)
+	// Ambil PORT dari environment, kalau tidak ada pakai 8080 (lokal)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// Konfigurasi Custom HTTP Server dengan Timeout Ketat (Proteksi dari Serangan Slowloris & Connection Exhaustion DDoS)
+	// Konfigurasi Custom HTTP Server dengan Timeout Ketat
 	srv := &http.Server{
 		Addr:           ":" + port,
 		Handler:        r,

@@ -18,15 +18,19 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		tokenString := strings.Replace(authHeader, "Bearer ", "", 1)
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// Tidak ada secret cadangan: kalau JWT_SECRET kosong, tolak semua request.
 		jwtSecret := []byte(os.Getenv("JWT_SECRET"))
 		if len(jwtSecret) == 0 {
-			jwtSecret = []byte("secretkeyrahasia")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Konfigurasi server tidak lengkap"})
+			c.Abort()
+			return
 		}
 
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			return jwtSecret, nil
-		})
+		}, jwt.WithValidMethods([]string{"HS256"}))
 
 		if err != nil || !token.Valid {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token tidak valid"})

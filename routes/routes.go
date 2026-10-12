@@ -73,6 +73,9 @@ func MaxBodySizeMiddleware(maxBytes int64) gin.HandlerFunc {
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
+	// Render berada di belakang Cloudflare: IP asli pengunjung ada di header CF-Connecting-IP
+	// (Cloudflare menolak request klien yang membawa header itu, jadi tidak bisa dipalsukan).
+	r.TrustedPlatform = gin.PlatformCloudflare
 	r.SetTrustedProxies(nil)
 
 	// Middlewares Keamanan Utama
@@ -98,6 +101,9 @@ func SetupRouter() *gin.Engine {
 		api.POST("/login", strictAuthLimiter, controllers.Login)
 		api.POST("/forgot-password", strictAuthLimiter, controllers.ForgotPassword)
 		api.POST("/reset-password", strictAuthLimiter, controllers.ResetPassword)
+
+		// SSO LowonganKita: tukar kode sekali pakai menjadi sesi LapKeu
+		api.POST("/sso/exchange", strictAuthLimiter, controllers.SSOExchange)
 
 		// WebAuthn Biometric Routes (Public)
 		api.POST("/webauthn/login/begin", strictAuthLimiter, controllers.BeginLogin)
