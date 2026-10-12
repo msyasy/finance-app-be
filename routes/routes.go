@@ -104,7 +104,6 @@ func SetupRouter() *gin.Engine {
 
 		// SSO LowonganKita: tukar kode sekali pakai menjadi sesi LapKeu
 		api.POST("/sso/exchange", strictAuthLimiter, controllers.SSOExchange)
-		api.GET("/debug-ip", controllers.DebugIP)
 
 		// WebAuthn Biometric Routes (Public)
 		api.POST("/webauthn/login/begin", strictAuthLimiter, controllers.BeginLogin)
